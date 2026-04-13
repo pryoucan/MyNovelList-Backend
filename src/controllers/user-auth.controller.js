@@ -16,6 +16,21 @@ const registerUser = async (req, res) => {
       return res.status(400).json({ message: "User already exists" });
     }
 
+    const saveOtp = otpGenerator(6, 35);
+    const otpToStore = await bcrypt.hash(saveOtp, 10);
+    const key = `otp:${email}`;
+
+    await redis.set(key, otpToStore, { ex: 600 });
+
+    await resend.emails.send({
+      from: "MNL Auth <onboarding@resend.dev>",
+      to: email,
+      subject: "Your email verification Code",
+      text: `Your OTP is ${saveOtp}. It expires in 10 minutes.`
+    });
+
+    
+
     let role = "USER";
 
     if (adminkey) {
@@ -102,8 +117,10 @@ const forgotPassword = async (req, res) => {
       text: `Your OTP is ${saveOtp}. It expires in 10 minutes.`
     });
 
-    return res.status(200).json({ message: 
-      `If an account exists, a verification code has been sent.`})
+    return res.status(200).json({
+      message:
+        `If an account exists, a verification code has been sent.`
+    })
   }
   catch (error) {
     return res.status(500).json({ message: "Something went wrong" });
@@ -113,30 +130,31 @@ const forgotPassword = async (req, res) => {
 
 const verifyOtp = async (req, res) => {
   const { email, otp } = req.body;
-  if(!email || !otp) {
+  if (!email || !otp) {
     return res.status(400).json({ message: "Enter required fields" });
   }
 
   try {
     const key = `otp:${email}`
     const dbOtp = await redis.get(key);
-    if(!dbOtp) {
+    if (!dbOtp) {
       return res.status(400).json({ message: "Invalid or expired otp" })
     }
-    if(!(await bcrypt.compare(otp, dbOtp))) {
+    if (!(await bcrypt.compare(otp, dbOtp))) {
       return res.status(400).json({ message: "Invalid or expired otp" });
     }
 
     const user = await User.findOne({ email });
-    if(!user) {
+    if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
     const resetToken = await jwt.sign(
-      { id: user._id,
+      {
+        id: user._id,
         purpose: "reset_password"
-      }, 
-      process.env.JWT_SECRETKEY, 
+      },
+      process.env.JWT_SECRETKEY,
       {
         expiresIn: "5m"
       }
@@ -146,7 +164,7 @@ const verifyOtp = async (req, res) => {
 
     return res.status(200).json({ message: "Otp verified", resetToken });
   }
-  catch(error) {
+  catch (error) {
     return res.status(500).json({ message: "Something went wrong" });
   }
 }
@@ -154,7 +172,7 @@ const verifyOtp = async (req, res) => {
 
 const resetPassword = async (req, res) => {
   const { password } = req.body;
-  if(!password) {
+  if (!password) {
     return res.status(400).json({ message: "Password is required" });
   }
   try {
