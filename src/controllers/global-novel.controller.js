@@ -25,7 +25,7 @@ const getNovelById = async (req, res) => {
 
     try {
         const novel = await GlobalNovel.findById(id);
-        if(novel.length === 0) {
+        if(!novel) {
             return res.status(404).json({
                 message: "No novels found"
             });

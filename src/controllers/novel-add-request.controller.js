@@ -7,7 +7,7 @@ export const novelAddRequest = async (req, res) => {
             ...req.body,
             createdBy: req.user.id
         });
-        return res.status(200).json({
+        return res.status(201).json({
             message: "You have successfully sent the novel request",
             novel: novel
         });

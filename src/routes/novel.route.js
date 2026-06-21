@@ -16,16 +16,16 @@ novelRouter.get("/", async (req, res) => {
     return viewNovel(req, res);
 });
 
-novelRouter.get("/:id", getNovelById);
-novelRouter.post("/add", 
+novelRouter.get("/view-request", userAuthentication, viewRequest);
+novelRouter.post("/add",
     userAuthentication,
     validate(novelAddRequestValidator),
     novelAddRequest
 );
-
-novelRouter.get("/view-request", userAuthentication, viewRequest);
 novelRouter.delete("/approve-request/:novelId", userAuthentication, approveRequest);
 novelRouter.delete("/reject-request/:novelId", userAuthentication, rejectRequest);
+
+novelRouter.get("/:id", getNovelById);
 
 
 export { novelRouter };

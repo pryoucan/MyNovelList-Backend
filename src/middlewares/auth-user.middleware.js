@@ -1,14 +1,26 @@
 import jwt from "jsonwebtoken";
 
 const userAuthentication = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+  let token = null;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  // 1. Try to read token from cookies
+  if (req.headers.cookie) {
+    token = req.headers.cookie
+      .split("; ")
+      .find((row) => row.startsWith("token="))
+      ?.split("=")[1];
+  }
+
+  // 2. Fallback to Authorization header
+  if (!token && req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
+    token = req.headers.authorization.split(" ")[1];
+  }
+
+  if (!token) {
     return res.status(401).json({ message: "Token not found" });
   }
 
   try {
-    const token = authHeader.split(" ")[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRETKEY);
     if(!decoded.purpose || decoded.purpose !== "reset_password") {
       req.user = { id: decoded.id, role: decoded.role, username: decoded.username };

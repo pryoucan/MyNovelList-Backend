@@ -44,13 +44,13 @@ const approveRequest = async (req, res) => {
 
         delete novelData._id;
         delete novelData.createdBy;
-        delete novelData.approved;
+        delete novelData.isApproved;
         delete novelData.createdAt;
         delete novelData.updatedAt;
 
         const globalNovel = await GlobalNovel.create({
             ...novelData,
-            approved: true
+            isApproved: true
         });
 
         await novelToApprove.deleteOne();
@@ -88,6 +88,10 @@ const rejectRequest = async (req, res) => {
         if (deleteResult.deletedCount === 1) {
             return res.status(200).json({
                 message: "Novel rejected & deleted successfully",
+            });
+        } else {
+            return res.status(500).json({
+                message: "Failed to delete the request",
             });
         }
     }

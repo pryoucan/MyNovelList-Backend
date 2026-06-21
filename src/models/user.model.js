@@ -21,14 +21,26 @@ const userSchema = new Schema(
     password: {
       type: String,
       required: true,
-      min: 8,
-      max: 20
+      minlength: 8,
+      maxlength: 20
     },
     
     role: {
       type: String,
       enum: ["USER", "ADMIN"],
       required: true
+    },
+    phoneNumber: {
+      type: String,
+      default: "Not Provided"
+    },
+    isEmailVerified: {
+      type: Boolean,
+      default: true
+    },
+    avatar: {
+      type: String,
+      default: ""
     }
   },
   { timestamps: true }

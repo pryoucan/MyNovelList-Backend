@@ -51,7 +51,7 @@ const registerUser = async (req, res) => {
   }
   catch (error) {
     console.log(error);
-    return res.status(401).json({ message: "Something went wrong" });
+    return res.status(500).json({ message: "Something went wrong" });
   }
 };
 
@@ -78,9 +78,25 @@ const loginUser = async (req, res) => {
       }
     );
 
+    const isLocalRequest = 
+      req.hostname === "localhost" || 
+      req.hostname === "127.0.0.1" || 
+      req.hostname === "[::1]" ||
+      req.hostname.endsWith(".local") || 
+      /^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^169\.254\./.test(req.hostname);
+
+    const isSecureCookie = process.env.NODE_ENV === "production" && !isLocalRequest;
+
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: isSecureCookie,
+      sameSite: "lax",
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      path: "/",
+    });
+
     res.json({
       message: "Login successful",
-      token,
       role: user.role,
       username: user.username
     });
@@ -102,7 +118,7 @@ const forgotPassword = async (req, res) => {
   try {
     const user = await User.findOne({ email });
     if (!user) {
-      return res.json({ ok: 200 });
+      return res.status(200).json({ message: "If an account exists, a verification code has been sent." });
     }
 
     const saveOtp = otpGenerator(6, 35);
@@ -123,6 +139,7 @@ const forgotPassword = async (req, res) => {
     })
   }
   catch (error) {
+    console.log(error);
     return res.status(500).json({ message: "Something went wrong" });
   }
 };
@@ -201,11 +218,73 @@ const resetPassword = async (req, res) => {
       }
     );
 
-    return res.status(201).json({ message: "Password updated successfully" });
+    return res.status(200).json({ message: "Password updated successfully" });
   }
   catch (error) {
     return res.status(500).json({ message: "Something went wrong" });
   }
 }
 
-export { registerUser, loginUser, forgotPassword, verifyOtp, resetPassword };
+const getProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password");
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    return res.status(200).json({
+      message: "User profile fetched successfully",
+      user
+    });
+  } catch (error) {
+    return res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+const logoutUser = async (req, res) => {
+  const isLocalRequest = 
+    req.hostname === "localhost" || 
+    req.hostname === "127.0.0.1" || 
+    req.hostname === "[::1]" ||
+    req.hostname.endsWith(".local") || 
+    /^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^169\.254\./.test(req.hostname);
+
+  const isSecureCookie = process.env.NODE_ENV === "production" && !isLocalRequest;
+
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: isSecureCookie,
+    sameSite: "lax",
+    path: "/",
+  });
+  return res.status(200).json({ message: "Logout successful" });
+};
+
+const updateProfile = async (req, res) => {
+  try {
+    const { avatar, phoneNumber } = req.body;
+    
+    const updateData = {};
+    if (avatar !== undefined) updateData.avatar = avatar;
+    if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber;
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    ).select("-password");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    return res.status(200).json({
+      message: "Profile updated successfully",
+      user
+    });
+  } catch (error) {
+    console.error("updateProfile error:", error);
+    return res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+export { registerUser, loginUser, forgotPassword, verifyOtp, resetPassword, logoutUser, getProfile, updateProfile };

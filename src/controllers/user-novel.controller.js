@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { GlobalNovel } from "../models/global-novel.model.js";
 import { UserNovel } from "../models/user-novel.model.js";
 
@@ -6,9 +7,6 @@ const viewUserNovel = async (req, res) => {
     const userId = req.user.id;
     const novels = await UserNovel.find({ user: userId });
 
-    if (novels.length === 0) {
-      return res.status(404).json({ message: "Novel is empty" });
-    }
     return res.status(200).json({
       message: "Novels fetched successfully",
       novels,
@@ -45,7 +43,7 @@ const getUserNovelById = async (req, res) => {
     const { novelId } = req.params;
     const userId = req.user.id;
     if (!novelId) {
-      return res.status(401).json({ message: "Novel id is required" });
+      return res.status(400).json({ message: "Novel id is required" });
     }
 
     const novel = await UserNovel.findOne({ user: userId, _id: novelId });
@@ -69,17 +67,24 @@ const getUserNovelById = async (req, res) => {
 const getUserNovelByName = async (req, res) => {
   try {
     const { n } = req.query;
-    if (name.length === 0) {
-      return res.status(401).json({ message: "Novel name is required" });
+    if (!n) {
+      return res.status(400).json({ message: "Novel name is required" });
     }
 
     const userId = req.user.id;
+
+    const matchingGlobalNovels = await GlobalNovel.find(
+      { $text: { $search: n } },
+      { _id: 1 }
+    );
+    const globalNovelIds = matchingGlobalNovels.map((g) => g._id);
+
     const novels = await UserNovel.find({
-      n: { $regex: n, $options: "i" },
-      user: userId,
+      novel: { $in: globalNovelIds },
+      user: new mongoose.Types.ObjectId(userId),
     });
 
-    if (!novels) {
+    if (novels.length === 0) {
       return res.status(404).json({
         message: "Novel not found",
       });
@@ -118,11 +123,6 @@ const addUserNovel = async (req, res) => {
       return res.status(409).json({ message: "Novel already in your list" });
     }
 
-    let strictStatus = status ?? "Reading";
-    if(novel.publication.status === "Upcoming") {
-      strictStatus = "Plan To Read";
-    }
-
     const upcomingForbiddenStatus = ["Reading", "Completed", "On Hold", "Dropped"];
     if (status !== undefined &&
       novel.publication.status === "Upcoming" &&
@@ -132,6 +132,11 @@ const addUserNovel = async (req, res) => {
         message:
           "This novel has not released yet, you cannot mark it as anything but Plan To Read",
       });
+    }
+
+    let strictStatus = status ?? "Reading";
+    if(novel.publication.status === "Upcoming") {
+      strictStatus = "Plan To Read";
     }
 
     if ((novel.publication.status === "Upcoming") &&
@@ -230,20 +235,41 @@ const editUserNovel = async (req, res) => {
         message: `You cannot set progress, rating, or dates for an unreleased novel`,
       });
     }
-    
-    if((status === "Plan To Read") &&
-      (
+
+    const effectiveStatus = status ?? userNovel.status;
+
+    // "Plan To Read" entries cannot carry any reading progress or dates.
+    // If the user is switching TO this status, clear those fields automatically.
+    // If they are STAYING at this status and try to set one of those fields, reject it.
+    if (effectiveStatus === "Plan To Read") {
+      if (status !== undefined) {
+        // Switching to Plan To Read — auto-clear all reading state.
+        // Any explicitly provided incompatible fields are ignored in favour of the clear.
+      } else if (
         progress !== undefined ||
         rating !== undefined ||
         startedAt !== undefined ||
         completedAt !== undefined
-    )) {
-      return res.status(400).json({
-        message: "You cannot set any field if the status is Plan To Read" 
-      });
+      ) {
+        return res.status(400).json({
+          message: "You cannot set progress, rating, or dates while status is Plan To Read",
+        });
+      }
     }
 
-    let progressCount = progress
+    // "Completed" requires a completedAt date.
+    // Fall back to the existing DB value so that transitioning back to Completed
+    // after a temporary status change doesn't force the user to re-supply the date.
+    if (effectiveStatus === "Completed") {
+      const resolvedCompletedAt = completedAt ?? userNovel.completedAt;
+      if (!resolvedCompletedAt) {
+        return res.status(400).json({
+          message: "completedAt is required when status is Completed",
+        });
+      }
+    }
+
+    let progressCount = progress;
     if (
       typeof progress === "number" &&
       novel.chapterCount > 0 &&
@@ -252,24 +278,23 @@ const editUserNovel = async (req, res) => {
       progressCount = novel.chapterCount;
     }
 
-    const allowed_fields = [
-      "status",
-      "progress",
-      "rating",
-      "startedAt",
-      "completedAt",
-    ];
-
+    const allowed_fields = ["status", "progress", "rating", "startedAt", "completedAt"];
     const updates = {};
     for (const key of allowed_fields) {
       if (req.body[key] !== undefined) {
-        if(key === "progress") {
-          updates[key] = progressCount;
-        }
-        else {
-          updates[key] = req.body[key];
-        }
+        updates[key] = key === "progress" ? progressCount : req.body[key];
       }
+    }
+
+    // Enforce field invariants based on the resolved target status.
+    if (effectiveStatus === "Plan To Read") {
+      updates.progress = 0;
+      updates.rating = null;
+      updates.startedAt = null;
+      updates.completedAt = null;
+    } else if (effectiveStatus !== "Completed") {
+      // Reading / On Hold / Dropped — a completedAt makes no sense; clear it.
+      updates.completedAt = null;
     }
 
     const updatedEntry = await UserNovel.findOneAndUpdate(
