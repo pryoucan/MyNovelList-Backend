@@ -78,19 +78,19 @@ const loginUser = async (req, res) => {
       }
     );
 
-    const isLocalRequest = 
-      req.hostname === "localhost" || 
-      req.hostname === "127.0.0.1" || 
+    const isLocalRequest =
+      req.hostname === "localhost" ||
+      req.hostname === "127.0.0.1" ||
       req.hostname === "[::1]" ||
-      req.hostname.endsWith(".local") || 
+      req.hostname.endsWith(".local") ||
       /^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^169\.254\./.test(req.hostname);
 
-    const isSecureCookie = process.env.NODE_ENV === "production" && !isLocalRequest;
+    const isProduction = process.env.NODE_ENV === "production" && !isLocalRequest;
 
     res.cookie("token", token, {
       httpOnly: true,
-      secure: isSecureCookie,
-      sameSite: "lax",
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
       maxAge: 24 * 60 * 60 * 1000, // 1 day
       path: "/",
     });
@@ -241,19 +241,19 @@ const getProfile = async (req, res) => {
 };
 
 const logoutUser = async (req, res) => {
-  const isLocalRequest = 
-    req.hostname === "localhost" || 
-    req.hostname === "127.0.0.1" || 
+  const isLocalRequest =
+    req.hostname === "localhost" ||
+    req.hostname === "127.0.0.1" ||
     req.hostname === "[::1]" ||
-    req.hostname.endsWith(".local") || 
+    req.hostname.endsWith(".local") ||
     /^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^169\.254\./.test(req.hostname);
 
-  const isSecureCookie = process.env.NODE_ENV === "production" && !isLocalRequest;
+  const isProduction = process.env.NODE_ENV === "production" && !isLocalRequest;
 
   res.clearCookie("token", {
     httpOnly: true,
-    secure: isSecureCookie,
-    sameSite: "lax",
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
     path: "/",
   });
   return res.status(200).json({ message: "Logout successful" });
