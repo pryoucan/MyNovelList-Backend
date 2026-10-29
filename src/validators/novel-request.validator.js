@@ -14,6 +14,10 @@ const genres = z
   .min(1, "At least one genre is required")
   .max(12, "At most 12 genres");
 
+const tags = z
+  .array(z.string().trim().min(1).max(50))
+  .max(100, "At most 100 tags");
+
 // A base64 image data URL; size and type are checked again when decoded.
 const cover = z.string().startsWith("data:image/", "Cover must be an image").max(3_000_000, "Cover is too large");
 
@@ -39,6 +43,7 @@ const novelFields = {
   chapterCount: z.number().int().min(0).max(100_000).nullable().optional(),
   synopsis: z.string().trim().max(5000).nullable().optional(),
   genres,
+  tags: tags.optional(),
 };
 
 // Rules that involve more than one field; applied to new novels and to the
@@ -53,7 +58,8 @@ export const checkNovelRules = (n) => {
   return null;
 };
 
-export const newNovelRequestValidator = z.object({ ...novelFields, cover: cover.optional() });
+// `replace` (admins only): overwrite the existing novel with the same title/author.
+export const newNovelRequestValidator = z.object({ ...novelFields, cover: cover.optional(), replace: z.boolean().optional() });
 
 // Edits: any subset of the fields; the controller drops ones that don't change.
 export const editNovelRequestValidator = z

@@ -23,6 +23,9 @@ model User {
 
   novels               UserNovel[]
   novelReviews         NovelReview[]
+  reviewLikes          ReviewLike[]
+  reviewReplies        ReviewReply[]
+  reviewReplyLikes     ReviewReplyLike[]
   addRequests          NovelAddRequest[]  @relation("AddRequestCreator")
   editRequests         NovelEditRequest[] @relation("EditRequestAuthor")
   reviewedAddRequests  NovelAddRequest[]  @relation("AddRequestReviewer")
@@ -64,6 +67,7 @@ model GlobalNovel {
   coverKey          String?  @map("cover_key")
   synopsis          String?
   genres            String[]
+  tags              String[] @default([])
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -93,6 +97,7 @@ model NovelAddRequest {
   coverKey          String?       @map("cover_key")
   synopsis          String?
   genres            String[]
+  tags              String[] @default([])
   status            RequestStatus @default(PENDING)
   reviewedById      String?       @map("reviewed_by_id") @db.Uuid
   reviewedAt        DateTime?     @map("reviewed_at") @db.Timestamptz(3)
@@ -170,10 +175,57 @@ model NovelReview {
 
   user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   novel GlobalNovel @relation(fields: [novelId], references: [id], onDelete: Cascade)
+  likes ReviewLike[]
+  replies ReviewReply[]
 
   @@unique([userId, novelId])
   @@index([novelId, createdAt])
   @@map("novel_reviews")
+}
+
+model ReviewLike {
+  userId   String @map("user_id") @db.Uuid
+  reviewId String @map("review_id") @db.Uuid
+
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  review NovelReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@id([userId, reviewId])
+  @@index([reviewId])
+  @@map("review_likes")
+}
+
+model ReviewReply {
+  id        String    @id @default(uuid()) @db.Uuid
+  reviewId  String    @map("review_id") @db.Uuid
+  parentId  String?   @map("parent_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  body      String?
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  editedAt  DateTime? @map("edited_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  review   NovelReview       @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent   ReviewReply?      @relation("ReplyThread", fields: [parentId], references: [id], onDelete: SetNull)
+  children ReviewReply[]     @relation("ReplyThread")
+  likes    ReviewReplyLike[]
+
+  @@index([reviewId, createdAt])
+  @@index([parentId])
+  @@map("review_replies")
+}
+
+model ReviewReplyLike {
+  userId  String @map("user_id") @db.Uuid
+  replyId String @map("reply_id") @db.Uuid
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reply ReviewReply @relation(fields: [replyId], references: [id], onDelete: Cascade)
+
+  @@id([userId, replyId])
+  @@index([replyId])
+  @@map("review_reply_likes")
 }
 
 // One pending code per email; a new request replaces the old one.

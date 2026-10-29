@@ -2,7 +2,7 @@
 // API input into GlobalNovel fields, diffing edits, approving and serializing.
 import { prisma } from "../config/db.config.js";
 import { coverUrl, deleteObject } from "../config/storage.config.js";
-import { normalizeGenres, serializeNovel } from "./serializers.js";
+import { normalizeGenres, normalizeTags, serializeNovel } from "./serializers.js";
 
 // GlobalNovel fields a request may change, with labels for the reviewer.
 export const EDITABLE_FIELDS = {
@@ -19,6 +19,7 @@ export const EDITABLE_FIELDS = {
   chapterCount: "Chapters",
   synopsis: "Synopsis",
   genres: "Genres",
+  tags: "Tags",
 };
 
 export const MAX_PENDING_PER_USER = 5;
@@ -46,6 +47,7 @@ export const toNovelFields = (input) => {
   set("chapterCount", input.chapterCount);
   set("synopsis", input.synopsis?.trim?.() ?? input.synopsis);
   if (input.genres !== undefined) out.genres = normalizeGenres(input.genres);
+  if (input.tags !== undefined) out.tags = normalizeTags(input.tags);
   return out;
 };
 

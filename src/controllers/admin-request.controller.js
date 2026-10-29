@@ -11,19 +11,23 @@ import {
 } from "../utils/novel-requests.js";
 
 const STATUSES = ["PENDING", "APPROVED", "REJECTED"];
-const LIST_LIMIT = 50;
+const PAGE_SIZE = 10;
+const MAX_PAGE = 1000;
 
 const models = {
   new: { model: () => prisma.novelAddRequest, include: ADD_INCLUDE, serialize: serializeAddRequest },
   edit: { model: () => prisma.novelEditRequest, include: EDIT_INCLUDE, serialize: serializeEditRequest },
 };
 
-// GET /api/admin/requests?status=PENDING&type=new|edit
+// GET /api/admin/requests?status=PENDING&type=new|edit&page=1
 // Pending: oldest first (first come, first reviewed). Reviewed: newest first.
+// New-novel and edit requests live in separate tables, so each is read up to
+// the end of the requested page, merged, and the page sliced from the result.
 const listRequests = async (req, res) => {
   const status = STATUSES.includes(req.query.status) ? req.query.status : "PENDING";
   const types = req.query.type in models ? [req.query.type] : ["new", "edit"];
   const order = status === "PENDING" ? "asc" : "desc";
+  const page = Math.min(MAX_PAGE, Math.max(1, Number.parseInt(req.query.page, 10) || 1));
 
   try {
     const lists = await Promise.all(
@@ -33,16 +37,22 @@ const listRequests = async (req, res) => {
           where: { status },
           include,
           orderBy: { [status === "PENDING" ? "createdAt" : "reviewedAt"]: order },
-          take: LIST_LIMIT,
+          take: page * PAGE_SIZE,
         });
-        return Promise.all(rows.map(serialize));
+        return rows;
       })
     );
 
     const key = status === "PENDING" ? "createdAt" : "reviewedAt";
-    const requests = lists
-      .flat()
-      .sort((a, b) => (order === "asc" ? 1 : -1) * (new Date(a[key]) - new Date(b[key])));
+    const pageRows = lists
+      .flatMap((rows, i) => rows.map((row) => ({ row, type: types[i] })))
+      .sort((a, b) => (order === "asc" ? 1 : -1) * (a.row[key] - b.row[key]))
+      .slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const requests = await Promise.all(pageRows.map(({ row, type }) => models[type].serialize(row)));
+
+    const total = (
+      await Promise.all(types.map((type) => models[type].model().count({ where: { status } })))
+    ).reduce((sum, n) => sum + n, 0);
 
     const [newPending, editPending] = await Promise.all([
       prisma.novelAddRequest.count({ where: { status: "PENDING" } }),
@@ -54,6 +64,10 @@ const listRequests = async (req, res) => {
       status,
       pending: { new: newPending, edit: editPending },
       requests,
+      page,
+      pageSize: PAGE_SIZE,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
     });
   } catch (error) {
     console.log(error);

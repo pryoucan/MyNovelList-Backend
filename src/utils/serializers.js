@@ -27,6 +27,21 @@ export const normalizeGenres = (genres) => {
   return result;
 };
 
+// Tags keep their casing ("Weak to Strong"); whitespace is collapsed and
+// case-insensitive duplicates removed.
+export const normalizeTags = (tags) => {
+  const seen = new Set();
+  const result = [];
+  for (const raw of tags) {
+    const tag = raw.trim().replace(/\s+/g, " ");
+    if (tag && !seen.has(tag.toLowerCase())) {
+      seen.add(tag.toLowerCase());
+      result.push(tag);
+    }
+  }
+  return result;
+};
+
 // Async because the avatar is returned as a presigned URL.
 export const serializeUser = async (user) => {
   if (!user) return user;
