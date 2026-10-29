@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { viewNovel, getNovelById, getNovelByName, getNovelStats } from "../controllers/global-novel.controller.js";
+import { listNovelReviews, createNovelReview, editNovelReview } from "../controllers/novel-review.controller.js";
+import { userAuthentication } from "../middlewares/auth-user.middleware.js";
 
 const novelRouter = Router();
 
@@ -11,8 +13,11 @@ novelRouter.get("/", async (req, res) => {
 });
 
 novelRouter.get("/stats", getNovelStats);
+novelRouter.get("/:id/reviews", listNovelReviews);
+novelRouter.post("/:id/reviews", userAuthentication, createNovelReview);
+novelRouter.patch("/:id/reviews/mine", userAuthentication, editNovelReview);
 novelRouter.get("/:id", getNovelById);
 
-// Suggesting and reviewing novels lives in request.route.js and admin.route.js.
+// Suggestions for novel details live in request.route.js and admin.route.js.
 
 export { novelRouter };

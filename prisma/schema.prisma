@@ -22,6 +22,7 @@ model User {
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   novels               UserNovel[]
+  novelReviews         NovelReview[]
   addRequests          NovelAddRequest[]  @relation("AddRequestCreator")
   editRequests         NovelEditRequest[] @relation("EditRequestAuthor")
   reviewedAddRequests  NovelAddRequest[]  @relation("AddRequestReviewer")
@@ -67,6 +68,7 @@ model GlobalNovel {
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   userNovels   UserNovel[]
+  reviews      NovelReview[]
   editRequests NovelEditRequest[]
   fromRequests NovelAddRequest[]
 
@@ -155,6 +157,23 @@ model UserNovel {
   @@unique([userId, novelId])
   @@index([novelId])
   @@map("user_novels")
+}
+
+model NovelReview {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  novelId   String    @map("novel_id") @db.Uuid
+  body      String
+  isSpoiler Boolean   @default(false) @map("is_spoiler")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  editedAt  DateTime? @map("edited_at") @db.Timestamptz(3)
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  novel GlobalNovel @relation(fields: [novelId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, novelId])
+  @@index([novelId, createdAt])
+  @@map("novel_reviews")
 }
 
 // One pending code per email; a new request replaces the old one.
