@@ -24,8 +24,6 @@ const readInput = (body) => {
 export const listNovelReviews = async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(404).json({ message: "Novel not found" });
   try {
-    const novel = await prisma.globalNovel.findUnique({ where: { id: req.params.id }, select: { id: true } });
-    if (!novel) return res.status(404).json({ message: "Novel not found" });
     const reviews = await prisma.novelReview.findMany({
       where: { novelId: req.params.id },
       select: reviewSelect,
@@ -43,8 +41,6 @@ export const createNovelReview = async (req, res) => {
   const input = readInput(req.body);
   if (!input) return res.status(400).json({ message: "Review must be 1–5000 characters and include a spoiler choice" });
   try {
-    const novel = await prisma.globalNovel.findUnique({ where: { id: req.params.id }, select: { id: true } });
-    if (!novel) return res.status(404).json({ message: "Novel not found" });
     const review = await prisma.novelReview.create({
       data: { ...input, userId: req.user.id, novelId: req.params.id },
       select: reviewSelect,
@@ -52,6 +48,7 @@ export const createNovelReview = async (req, res) => {
     return res.status(201).json({ review: present(review) });
   } catch (error) {
     if (isUniqueViolation(error)) return res.status(409).json({ message: "You already reviewed this novel" });
+    if (error?.code === "P2003") return res.status(404).json({ message: "Novel not found" });
     console.error(error);
     return res.status(500).json({ message: "Something went wrong" });
   }
@@ -77,6 +74,20 @@ export const editNovelReview = async (req, res) => {
       select: reviewSelect,
     });
     return res.json({ review: present(review) });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+export const deleteNovelReview = async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ message: "Novel not found" });
+  try {
+    const result = await prisma.novelReview.deleteMany({
+      where: { novelId: req.params.id, userId: req.user.id },
+    });
+    if (!result.count) return res.status(404).json({ message: "Review not found" });
+    return res.status(204).send();
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: "Something went wrong" });
