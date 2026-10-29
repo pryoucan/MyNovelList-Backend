@@ -2,7 +2,7 @@ services:
   server:
     build: .
     ports:
-      - "3000:3000"
+      - "5001:5001"
     env_file:
       - .env
     restart: unless-stopped

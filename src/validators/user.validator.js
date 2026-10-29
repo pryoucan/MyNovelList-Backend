@@ -9,7 +9,7 @@ export const registerUserValidator = z.object({
             .trim(),
 
     email:
-        z.string().email("Invalid email format"),
+        z.string().trim().toLowerCase().email("Invalid email format"),
 
     password:
         z.string({
@@ -24,7 +24,7 @@ export const registerUserValidator = z.object({
 
 export const loginUserValidator = z.object({
     email:
-        z.string().email("Invalid email format"),
+        z.string().trim().toLowerCase().email("Invalid email format"),
 
     password:
         z.string({

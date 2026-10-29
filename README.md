@@ -10,8 +10,8 @@ Instead:
 
 **Tech Stack Used**
 - Nodejs/Expressjs
-- MongodDB - Primary Db
-- Redis - OTP storage, caching, rate-limiting
+- Neon Postgres (via Prisma) - Primary Db, also stores OTPs
+- Neon Object Storage - User avatars
 
 **API Endpoints**
 

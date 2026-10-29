@@ -1,6 +1,7 @@
 import "./bootstrap.js";
 
 import dbConnectivity from "./config/db.config.js";
+import { startOtpCleanup } from "./jobs/otp-cleanup.js";
 
 import express from "express";
 import cors from "cors";
@@ -8,6 +9,8 @@ import cors from "cors";
 import { authRouter } from "./routes/auth.route.js";
 import { novelRouter } from "./routes/novel.route.js";
 import { userNovelRouter } from "./routes/user-novel.route.js";
+import { requestRouter } from "./routes/request.route.js";
+import { adminRouter } from "./routes/admin.route.js";
 
 const app = express();
 
@@ -54,10 +57,13 @@ app.get("/health", (req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/novels", novelRouter);
 app.use("/api/users/novels", userNovelRouter);
+app.use("/api/requests", requestRouter);
+app.use("/api/admin", adminRouter);
 
 const runServer = async () => {
     try {
         await dbConnectivity();
+        startOtpCleanup();
         app.listen(PORT, () => {
             console.log(`server is running on port ${PORT}`);
         });

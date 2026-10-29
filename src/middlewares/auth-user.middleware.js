@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { isUuid } from "../utils/serializers.js";
 
 const userAuthentication = async (req, res, next) => {
   let token = null;
@@ -22,6 +23,10 @@ const userAuthentication = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRETKEY);
+    // Tokens issued before the Postgres migration carry Mongo ObjectIds.
+    if (!isUuid(decoded.id)) {
+      return res.status(401).json({ message: "Invalid token" });
+    }
     if(!decoded.purpose || decoded.purpose !== "reset_password") {
       req.user = { id: decoded.id, role: decoded.role, username: decoded.username };
     }

@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id              String   @id @default(uuid()) @db.Uuid
+  // Display casing is kept; uniqueness is case-insensitive (see users_username_lower_key in the migration).
+  username        String   @unique @db.VarChar(20)
+  // Always stored lowercased and trimmed.
+  email           String   @unique @db.VarChar(254)
+  password        String
+  role            Role     @default(USER)
+  phoneNumber     String?  @map("phone_number") @db.VarChar(20)
+  isEmailVerified Boolean  @default(true) @map("is_email_verified")
+  // Object key in the Neon "assets" bucket, e.g. avatars/<user-id>/<uuid>.webp
+  avatarKey       String?  @map("avatar_key")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  novels               UserNovel[]
+  addRequests          NovelAddRequest[]  @relation("AddRequestCreator")
+  editRequests         NovelEditRequest[] @relation("EditRequestAuthor")
+  reviewedAddRequests  NovelAddRequest[]  @relation("AddRequestReviewer")
+  reviewedEditRequests NovelEditRequest[] @relation("EditRequestReviewer")
+
+  @@map("users")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Fields shared by GlobalNovel and NovelAddRequest. Allowed values for
+// original_language, publisher_*, and publication_status are enforced by
+// CHECK constraints in the migration; Zod validates them at the API edge.
+model GlobalNovel {
+  id                String   @id @default(uuid()) @db.Uuid
+  title             String
+  originalTitle     String?  @map("original_title")
+  author            String
+  originalLanguage  String   @map("original_language") @db.VarChar(2)
+  isFullyTranslated Boolean  @default(false) @map("is_fully_translated")
+  publisherOriginal String?  @map("publisher_original")
+  publisherEnglish  String?  @map("publisher_english")
+  publicationStatus String   @map("publication_status")
+  startYear         Int?     @map("start_year")
+  endYear           Int?     @map("end_year")
+  chapterCount      Int?     @map("chapter_count")
+  // Legacy static path (e.g. /covers/x.jpg); uploaded covers use coverKey instead.
+  coverImage        String?  @map("cover_image")
+  // Object key in the "assets" bucket, e.g. covers/<uuid>.webp
+  coverKey          String?  @map("cover_key")
+  synopsis          String?
+  genres            String[]
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  userNovels   UserNovel[]
+  editRequests NovelEditRequest[]
+  fromRequests NovelAddRequest[]
+
+  @@map("global_novels")
+}
+
+model NovelAddRequest {
+  id                String        @id @default(uuid()) @db.Uuid
+  createdById       String        @map("created_by_id") @db.Uuid
+  title             String
+  originalTitle     String?       @map("original_title")
+  author            String
+  originalLanguage  String        @map("original_language") @db.VarChar(2)
+  isFullyTranslated Boolean       @default(false) @map("is_fully_translated")
+  publisherOriginal String?       @map("publisher_original")
+  publisherEnglish  String?       @map("publisher_english")
+  publicationStatus String        @map("publication_status")
+  startYear         Int?          @map("start_year")
+  endYear           Int?          @map("end_year")
+  chapterCount      Int?          @map("chapter_count")
+  coverImage        String?       @map("cover_image")
+  coverKey          String?       @map("cover_key")
+  synopsis          String?
+  genres            String[]
+  status            RequestStatus @default(PENDING)
+  reviewedById      String?       @map("reviewed_by_id") @db.Uuid
+  reviewedAt        DateTime?     @map("reviewed_at") @db.Timestamptz(3)
+  reviewNote        String?       @map("review_note")
+  // The novel created when this request was approved.
+  createdNovelId    String?       @map("created_novel_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  createdBy    User         @relation("AddRequestCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  reviewedBy   User?        @relation("AddRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  createdNovel GlobalNovel? @relation(fields: [createdNovelId], references: [id], onDelete: SetNull)
+
+  @@index([createdById])
+  @@index([status, createdAt])
+  @@map("novel_add_requests")
+}
+
+model NovelEditRequest {
+  id             String        @id @default(uuid()) @db.Uuid
+  novelId        String        @map("novel_id") @db.Uuid
+  editedById     String        @map("edited_by_id") @db.Uuid
+  // Proposed values, keyed by GlobalNovel field name (only fields that change).
+  updatedFields  Json          @map("updated_fields")
+  // The novel's values for those fields when the request was made, so the
+  // reviewer sees before/after and can spot fields changed since.
+  originalValues Json          @default("{}") @map("original_values")
+  // Proposed new cover (object key); null when the cover isn't changing.
+  coverKey       String?       @map("cover_key")
+  status         RequestStatus @default(PENDING)
+  reviewedById   String?       @map("reviewed_by_id") @db.Uuid
+  reviewedAt     DateTime?     @map("reviewed_at") @db.Timestamptz(3)
+  reviewNote     String?       @map("review_note")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  novel      GlobalNovel @relation(fields: [novelId], references: [id], onDelete: Cascade)
+  editedBy   User        @relation("EditRequestAuthor", fields: [editedById], references: [id], onDelete: Cascade)
+  reviewedBy User?       @relation("EditRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([novelId])
+  @@index([editedById])
+  @@index([status, createdAt])
+  @@map("novel_edit_requests")
+}
+
+model UserNovel {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  novelId     String    @map("novel_id") @db.Uuid
+  progress    Int       @default(0)
+  rating      Float?
+  status      String    @default("Reading")
+  startedAt   DateTime? @map("started_at") @db.Timestamptz(3)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  novel GlobalNovel @relation(fields: [novelId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, novelId])
+  @@index([novelId])
+  @@map("user_novels")
+}
+
+// One pending code per email; a new request replaces the old one.
+// Expired rows are rejected on verify and purged daily (src/jobs/otp-cleanup.js).
+model Otp {
+  email     String   @id @db.VarChar(254)
+  codeHash  String   @map("code_hash")
+  attempts  Int      @default(0)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@map("otps")
+}

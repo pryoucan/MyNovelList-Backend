@@ -1,6 +1,7 @@
-import { User } from "../models/user.model.js";
-import { redis } from "../config/redis.config.js";
-import { otpGenerator } from "../utils/otp-generator.js";
+import { prisma } from "../config/db.config.js";
+import { issueOtp, consumeOtp, discardOtp, isOtpFormat } from "../utils/otp-store.js";
+import { normalizeEmail, serializeUser, isUniqueViolation } from "../utils/serializers.js";
+import { parseImageDataUrl, uploadAvatar, deleteObject } from "../config/storage.config.js";
 
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
@@ -8,28 +9,37 @@ import bcrypt from "bcryptjs";
 import { Resend } from "resend";
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+// Resend returns { error } instead of throwing, so surface it explicitly.
+const sendOtpEmail = async (email, subject, code) => {
+  const { error } = await resend.emails.send({
+    from: "MNL Auth <onboarding@resend.dev>",
+    to: email,
+    subject,
+    text: `Your OTP is ${code}. It expires in 10 minutes.`
+  });
+  if (error) {
+    await discardOtp(email);
+    throw new Error(`Resend failed: ${error.message}`);
+  }
+};
+
 const registerUser = async (req, res) => {
   try {
-    const { username, email, password, adminkey } = req.body;
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
-    }
+    const { username, password, adminkey } = req.body;
+    const email = normalizeEmail(req.body.email);
 
-    const saveOtp = otpGenerator(6, 35);
-    const otpToStore = await bcrypt.hash(saveOtp, 10);
-    const key = `otp:${email}`;
-
-    await redis.set(key, otpToStore, { ex: 600 });
-
-    await resend.emails.send({
-      from: "MNL Auth <onboarding@resend.dev>",
-      to: email,
-      subject: "Your email verification Code",
-      text: `Your OTP is ${saveOtp}. It expires in 10 minutes.`
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email },
+          { username: { equals: username, mode: "insensitive" } }
+        ]
+      }
     });
-
-    
+    if (existingUser) {
+      const field = existingUser.email === email ? "Email" : "Username";
+      return res.status(409).json({ message: `${field} is already taken` });
+    }
 
     let role = "USER";
 
@@ -40,16 +50,29 @@ const registerUser = async (req, res) => {
       role = "ADMIN";
     }
 
-    const userData = await User.create({
-      username,
-      email,
-      password,
-      role
+    // The signup code isn't required to log in yet, so a failed send shouldn't block registration.
+    try {
+      const code = await issueOtp(email);
+      await sendOtpEmail(email, "Your email verification Code", code);
+    } catch (error) {
+      console.log("Verification email not sent:", error.message);
+    }
+
+    const userData = await prisma.user.create({
+      data: {
+        username,
+        email,
+        password: await bcrypt.hash(password, 10),
+        role
+      }
     });
 
-    return res.status(201).json({ message: "Registration successfull", userData });
+    return res.status(201).json({ message: "Registration successfull", userData: await serializeUser(userData) });
   }
   catch (error) {
+    if (isUniqueViolation(error)) {
+      return res.status(409).json({ message: "Email or username is already taken" });
+    }
     console.log(error);
     return res.status(500).json({ message: "Something went wrong" });
   }
@@ -58,20 +81,18 @@ const registerUser = async (req, res) => {
 
 const loginUser = async (req, res) => {
   try {
-    const { email, password, adminkey } = req.body;
-    const user = await User.findOne({ email });
-    if (!user || !(await user.matchPassword(password))) {
+    const { password } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    // Admins sign in like everyone else: admin rights come from the user's
+    // role in the database (checked again on every admin request), not from
+    // a shared key typed into the browser. ADMIN_KEY is only used at signup.
 
-    if (user.role === "ADMIN") {
-      if (!adminkey || adminkey !== process.env.ADMIN_KEY) {
-        return res.status(403).json({ message: "Admin verification failed" });
-      }
-    }
-
-    const token = await jwt.sign({ id: user._id, role: user.role, username: user.username },
+    const token = await jwt.sign({ id: user.id, role: user.role, username: user.username },
       process.env.JWT_SECRETKEY,
       {
         expiresIn: "1d"
@@ -110,28 +131,19 @@ const loginUser = async (req, res) => {
 
 
 const forgotPassword = async (req, res) => {
-  const { email } = req.body;
-  if (!email) {
+  if (!req.body.email) {
     return res.status(400).json({ message: "Email is required" });
   }
+  const email = normalizeEmail(req.body.email);
 
   try {
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return res.status(200).json({ message: "If an account exists, a verification code has been sent." });
     }
 
-    const saveOtp = otpGenerator(6, 35);
-    const otpToStore = await bcrypt.hash(saveOtp, 10);
-    const key = `otp:${email}`;
-    await redis.set(key, otpToStore, { ex: 600 });
-
-    await resend.emails.send({
-      from: "MNL Auth <onboarding@resend.dev>",
-      to: email,
-      subject: "Your verification Code",
-      text: `Your OTP is ${saveOtp}. It expires in 10 minutes.`
-    });
+    const code = await issueOtp(email);
+    await sendOtpEmail(email, "Your verification Code", code);
 
     return res.status(200).json({
       message:
@@ -146,29 +158,29 @@ const forgotPassword = async (req, res) => {
 
 
 const verifyOtp = async (req, res) => {
-  const { email, otp } = req.body;
-  if (!email || !otp) {
+  const { otp } = req.body;
+  if (!req.body.email || !otp) {
     return res.status(400).json({ message: "Enter required fields" });
   }
+  const email = normalizeEmail(req.body.email);
 
   try {
-    const key = `otp:${email}`
-    const dbOtp = await redis.get(key);
-    if (!dbOtp) {
-      return res.status(400).json({ message: "Invalid or expired otp" })
+    const code = String(otp).trim();
+    if (!isOtpFormat(code)) {
+      return res.status(400).json({ message: "OTP must be 4 digits" });
     }
-    if (!(await bcrypt.compare(otp, dbOtp))) {
+    if (!(await consumeOtp(email, code))) {
       return res.status(400).json({ message: "Invalid or expired otp" });
     }
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
     const resetToken = await jwt.sign(
       {
-        id: user._id,
+        id: user.id,
         purpose: "reset_password"
       },
       process.env.JWT_SECRETKEY,
@@ -177,11 +189,10 @@ const verifyOtp = async (req, res) => {
       }
     );
 
-    await redis.del(key);
-
     return res.status(200).json({ message: "Otp verified", resetToken });
   }
   catch (error) {
+    console.log(error);
     return res.status(500).json({ message: "Something went wrong" });
   }
 }
@@ -192,50 +203,47 @@ const resetPassword = async (req, res) => {
   if (!password) {
     return res.status(400).json({ message: "Password is required" });
   }
+  if (password.length < 8 || password.length > 20) {
+    return res.status(400).json({ message: "Password must be 8-20 characters long" });
+  }
   try {
-    const user = await User.findById({ _id: req.user.id });
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (await user.matchPassword(password)) {
+    if (await bcrypt.compare(password, user.password)) {
       return res.status(400).json({
+        code: "SAME_PASSWORD",
         message: "New password cannot be same as the old one"
       });
     }
 
-    const newPassword = await bcrypt.hash(password, 10);
-
-    await User.findOneAndUpdate(
-      {
-        _id: req.user.id
-      },
-      {
-        password: newPassword
-      },
-      {
-        new: true
-      }
-    );
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { password: await bcrypt.hash(password, 10) }
+    });
 
     return res.status(200).json({ message: "Password updated successfully" });
   }
   catch (error) {
+    console.log(error);
     return res.status(500).json({ message: "Something went wrong" });
   }
 }
 
 const getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select("-password");
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
     return res.status(200).json({
       message: "User profile fetched successfully",
-      user
+      user: await serializeUser(user)
     });
   } catch (error) {
+    console.log(error);
     return res.status(500).json({ message: "Something went wrong" });
   }
 };
@@ -262,24 +270,40 @@ const logoutUser = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const { avatar, phoneNumber } = req.body;
-    
-    const updateData = {};
-    if (avatar !== undefined) updateData.avatar = avatar;
-    if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber;
 
-    const user = await User.findByIdAndUpdate(
-      req.user.id,
-      { $set: updateData },
-      { new: true, runValidators: true }
-    ).select("-password");
-
-    if (!user) {
+    const current = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!current) {
       return res.status(404).json({ message: "User not found" });
+    }
+
+    const updateData = {};
+    if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber?.trim() || null;
+
+    // avatar: a base64 image data URL uploads a new avatar; null/"" removes it.
+    if (avatar !== undefined) {
+      if (avatar) {
+        const image = parseImageDataUrl(avatar);
+        if (!image) {
+          return res.status(400).json({ message: "Avatar must be a PNG, JPEG, or WebP image under 2MB" });
+        }
+        updateData.avatarKey = await uploadAvatar(current.id, image);
+      } else {
+        updateData.avatarKey = null;
+      }
+    }
+
+    const user = await prisma.user.update({
+      where: { id: current.id },
+      data: updateData
+    });
+
+    if (avatar !== undefined && current.avatarKey && current.avatarKey !== user.avatarKey) {
+      await deleteObject(current.avatarKey);
     }
 
     return res.status(200).json({
       message: "Profile updated successfully",
-      user
+      user: await serializeUser(user)
     });
   } catch (error) {
     console.error("updateProfile error:", error);

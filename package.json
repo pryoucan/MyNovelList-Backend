@@ -5,24 +5,36 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "build": "prisma generate",
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:studio": "prisma studio"
   },
   "type": "module",
   "author": "Priyanshu",
   "license": "ISC",
   "dependencies": {
-    "@upstash/redis": "^1.36.0",
+    "@aws-sdk/client-s3": "^3.1158.0",
+    "@aws-sdk/s3-presigned-post": "^3.1158.0",
+    "@aws-sdk/s3-request-presigner": "^3.1158.0",
+    "@neon/config": "^1.9.5",
+    "@neon/env": "^1.6.6",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "ioredis": "^5.8.2",
+    "files-sdk": "^3.1.2",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.19.4",
+    "pg": "^8.23.1",
     "resend": "^6.6.0",
     "zod": "^4.2.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11"
+    "nodemon": "^3.1.11",
+    "prisma": "^7.10.1"
   }
 }

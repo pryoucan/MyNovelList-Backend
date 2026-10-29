@@ -1,11 +1,14 @@
-import mongoose from "mongoose";
-import { GlobalNovel } from "../models/global-novel.model.js";
-import { UserNovel } from "../models/user-novel.model.js";
+import { prisma } from "../config/db.config.js";
+import { isUuid } from "../utils/serializers.js";
+import { novelSearchFilter } from "./global-novel.controller.js";
 
 const viewUserNovel = async (req, res) => {
   try {
     const userId = req.user.id;
-    const novels = await UserNovel.find({ user: userId });
+    const novels = await prisma.userNovel.findMany({
+      where: { userId },
+      orderBy: { updatedAt: "desc" }
+    });
 
     return res.status(200).json({
       message: "Novels fetched successfully",
@@ -21,10 +24,15 @@ const getUserNovelByGId = async (req, res) => {
   const { novelId } = req.params;
   if(!novelId) {
     return res.status(400).json({ message: "Global Novel Id required" });
-  } 
+  }
+  if(!isUuid(novelId)) {
+    return res.status(404).json({ message: "Novel not found" });
+  }
 
   try {
-    const novel = await UserNovel.findOne({ novel: novelId, user: req.user.id });
+    const novel = await prisma.userNovel.findUnique({
+      where: { userId_novelId: { userId: req.user.id, novelId } }
+    });
     if(!novel) {
       return res.status(404).json({ message: "Novel not found" });
     }
@@ -34,6 +42,7 @@ const getUserNovelByGId = async (req, res) => {
     });
   }
   catch(error) {
+    console.log(error);
     return res.status(500).json({ message: "Something went wrong" });
   }
 };
@@ -45,8 +54,11 @@ const getUserNovelById = async (req, res) => {
     if (!novelId) {
       return res.status(400).json({ message: "Novel id is required" });
     }
+    if (!isUuid(novelId)) {
+      return res.status(404).json({ message: "Novel not found" });
+    }
 
-    const novel = await UserNovel.findOne({ user: userId, _id: novelId });
+    const novel = await prisma.userNovel.findFirst({ where: { id: novelId, userId } });
 
     if (!novel) {
       return res.status(404).json({
@@ -66,22 +78,18 @@ const getUserNovelById = async (req, res) => {
 
 const getUserNovelByName = async (req, res) => {
   try {
-    const { n } = req.query;
+    const n = req.query.n?.trim();
     if (!n) {
       return res.status(400).json({ message: "Novel name is required" });
     }
 
     const userId = req.user.id;
 
-    const matchingGlobalNovels = await GlobalNovel.find(
-      { $text: { $search: n } },
-      { _id: 1 }
-    );
-    const globalNovelIds = matchingGlobalNovels.map((g) => g._id);
-
-    const novels = await UserNovel.find({
-      novel: { $in: globalNovelIds },
-      user: new mongoose.Types.ObjectId(userId),
+    const novels = await prisma.userNovel.findMany({
+      where: {
+        userId,
+        novel: novelSearchFilter(n),
+      },
     });
 
     if (novels.length === 0) {
@@ -107,16 +115,18 @@ const addUserNovel = async (req, res) => {
   if (!novelId) {
     return res.status(400).json({ message: "Novel id is required" });
   }
+  if (!isUuid(novelId)) {
+    return res.status(404).json({ message: "Novel not found" });
+  }
 
   try {
-    const novel = await GlobalNovel.findById(novelId);
+    const novel = await prisma.globalNovel.findUnique({ where: { id: novelId } });
     if (!novel) {
       return res.status(404).json({ message: "Novel not found" });
     }
 
-    const alreadyExists = await UserNovel.findOne({
-      novel: novelId,
-      user: req.user.id,
+    const alreadyExists = await prisma.userNovel.findUnique({
+      where: { userId_novelId: { userId: req.user.id, novelId } },
     });
 
     if (alreadyExists) {
@@ -125,7 +135,7 @@ const addUserNovel = async (req, res) => {
 
     const upcomingForbiddenStatus = ["Reading", "Completed", "On Hold", "Dropped"];
     if (status !== undefined &&
-      novel.publication.status === "Upcoming" &&
+      novel.publicationStatus === "Upcoming" &&
       upcomingForbiddenStatus.includes(status)
     ) {
       return res.status(400).json({
@@ -135,11 +145,11 @@ const addUserNovel = async (req, res) => {
     }
 
     let strictStatus = status ?? "Reading";
-    if(novel.publication.status === "Upcoming") {
+    if(novel.publicationStatus === "Upcoming") {
       strictStatus = "Plan To Read";
     }
 
-    if ((novel.publication.status === "Upcoming") &&
+    if ((novel.publicationStatus === "Upcoming") &&
     (
       progress !== undefined ||
       rating !== undefined ||
@@ -172,14 +182,16 @@ const addUserNovel = async (req, res) => {
       progressCount = novel.chapterCount;
     }
 
-    const userNovel = await UserNovel.create({
-      user: req.user.id,
-      novel: novelId,
-      status: strictStatus,
-      progress: progressCount,
-      rating,
-      startedAt,
-      completedAt,
+    const userNovel = await prisma.userNovel.create({
+      data: {
+        userId: req.user.id,
+        novelId,
+        status: strictStatus,
+        progress: progressCount,
+        rating,
+        startedAt,
+        completedAt,
+      },
     });
 
     return res.status(201).json({
@@ -188,6 +200,9 @@ const addUserNovel = async (req, res) => {
     });
   } catch (error) {
     console.log(error);
+    if (error?.code === "P2002") {
+      return res.status(409).json({ message: "Novel already in your list" });
+    }
     return res.status(500).json({ message: "Something went wrong" });
   }
 };
@@ -199,23 +214,24 @@ const editUserNovel = async (req, res) => {
   if (!novelId) {
     return res.status(400).json({ message: "Novel id is required" });
   }
+  if (!isUuid(novelId)) {
+    return res.status(404).json({ message: "Novel not found" });
+  }
 
   try {
-    const userNovel = await UserNovel.findOne({ _id: novelId, user: req.user.id });
+    const userNovel = await prisma.userNovel.findFirst({
+      where: { id: novelId, userId: req.user.id },
+      include: { novel: true },
+    });
     if (!userNovel) {
       return res.status(404).json({ message: "Novel not found" });
     }
 
-    const globalNovelId = userNovel.novel;
-
-    const novel = await GlobalNovel.findById(globalNovelId);
-    if(!novel) {
-      return res.status(404).json({ message: "Novel not found" });
-    }
+    const novel = userNovel.novel;
 
     const upcomingForbiddenStatus = ["Reading", "Completed", "On Hold", "Dropped"];
     if (status !== undefined &&
-      novel.publication.status === "Upcoming" &&
+      novel.publicationStatus === "Upcoming" &&
       upcomingForbiddenStatus.includes(status)
     ) {
       return res.status(400).json({
@@ -225,7 +241,7 @@ const editUserNovel = async (req, res) => {
     }
 
     if (
-      (novel.publication.status === "Upcoming") &&
+      (novel.publicationStatus === "Upcoming") &&
       (progress !== undefined ||
         rating !== undefined ||
         startedAt !== undefined ||
@@ -297,23 +313,17 @@ const editUserNovel = async (req, res) => {
       updates.completedAt = null;
     }
 
-    const updatedEntry = await UserNovel.findOneAndUpdate(
-      {
-        _id: novelId,
-        user: req.user.id,
-      },
-      updates,
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
+    const updatedEntry = await prisma.userNovel.update({
+      where: { id: userNovel.id },
+      data: updates,
+    });
 
     return res.status(200).json({
       message: "Novel updated successfully",
       updatedEntry,
     });
   } catch (error) {
+    console.log(error);
     return res.status(500).json({ message: "Something went wrong" });
   }
 };
@@ -323,14 +333,13 @@ const deleteUserNovel = async (req, res) => {
     const { novelId } = req.params;
     const userId = req.user.id;
 
-    const novel = await UserNovel.findOne({ _id: novelId, user: userId });
-    if (!novel) {
+    if (!isUuid(novelId)) {
       return res.status(404).json({ message: "Novel not found" });
     }
 
-    const result = await UserNovel.deleteOne({ _id: novelId, user: userId });
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ message: "Cannot delete the novel" });
+    const result = await prisma.userNovel.deleteMany({ where: { id: novelId, userId } });
+    if (result.count === 0) {
+      return res.status(404).json({ message: "Novel not found" });
     }
 
     return res.status(200).json({ message: "Novel deleted successfully" });
