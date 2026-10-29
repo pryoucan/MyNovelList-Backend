@@ -93,6 +93,35 @@ const MIN_RATINGS_FOR_SCORE = 2;
 
 const roundTo = (value, digits) => Math.round(value * 10 ** digits) / 10 ** digits;
 
+// The detail page only needs one novel's score and rating count.
+const getNovelStatsById = async (req, res) => {
+    const { id } = req.params;
+    if (!isUuid(id)) return res.status(404).json({ message: "Novel not found" });
+
+    try {
+        const [ratings, site] = await Promise.all([
+            prisma.userNovel.aggregate({
+                where: { novelId: id, rating: { not: null } },
+                _count: { rating: true },
+                _sum: { rating: true },
+            }),
+            prisma.userNovel.aggregate({
+                where: { rating: { not: null } },
+                _avg: { rating: true },
+            }),
+        ]);
+        const ratingCount = ratings._count.rating;
+        const siteMean = site._avg.rating;
+        const score = ratingCount >= MIN_RATINGS_FOR_SCORE && siteMean != null
+            ? roundTo((PRIOR_WEIGHT * siteMean + ratings._sum.rating) / (PRIOR_WEIGHT + ratingCount), 1)
+            : null;
+        return res.json({ stats: { novelId: id, ratingCount, score } });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Something went wrong" });
+    }
+};
+
 // Public, aggregated across all readers: reader counts and community scores.
 const getNovelStats = async (req, res) => {
     try {
@@ -132,4 +161,4 @@ const getNovelStats = async (req, res) => {
     }
 }
 
-export { viewNovel, getNovelById, getNovelByName, getNovelStats };
+export { viewNovel, getNovelById, getNovelByName, getNovelStats, getNovelStatsById };

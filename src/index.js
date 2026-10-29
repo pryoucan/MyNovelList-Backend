@@ -11,6 +11,7 @@ import { novelRouter } from "./routes/novel.route.js";
 import { userNovelRouter } from "./routes/user-novel.route.js";
 import { requestRouter } from "./routes/request.route.js";
 import { adminRouter } from "./routes/admin.route.js";
+import { profileRouter } from "./routes/profile.route.js";
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use("/api/novels", novelRouter);
 app.use("/api/users/novels", userNovelRouter);
 app.use("/api/requests", requestRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/profiles", profileRouter);
 
 const runServer = async () => {
     try {
